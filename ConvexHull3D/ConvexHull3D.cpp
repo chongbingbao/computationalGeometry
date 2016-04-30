@@ -96,8 +96,378 @@ long SignedVolume(Point<3, int> &p0, Point<3, int> &p1, Point<3, int> &p2, Point
     return vol;
 }
 
+namespace IncrementalAlg{
+    typedef struct vertexStruct *vertex_ptr;
+    typedef struct halfEdgeStruct *halfEdge_ptr;
+    typedef struct faceStruct *face_ptr;
+    
+    struct halfEdgeStruct{
+        vertex_ptr vert;
+        halfEdge_ptr pair;
+        face_ptr face;
+        halfEdge_ptr next,prev;
+        
+        bool deleteFlag;
+        bool mark; /* T iff point already processed. */        
+        face_ptr newFace;
+    };
+    
+    struct vertexStruct{
+        Point<3, int> v;
+        halfEdge_ptr edge;
+        vertex_ptr next, prev;
+        
+        int idx;
+        bool onhull;
+        bool mark;
+        halfEdge_ptr newHalfEdge;
+    };
+    
+    struct faceStruct{
+        halfEdge_ptr edge[3];
+        face_ptr next;
+        face_ptr prev;
+        vertex_ptr vertex[3];
+        bool visible;
+    };
+    template<typename T>
+    void SWAP(T& t, T& x, T& y) {
+        t = x;x = y;y = t;
+    }
 
-namespace IncrementalAlg {
+    template<typename T>
+    void fREE(T& p) {
+        if (p) { free(p); p = NULL; }
+    }
+
+    template<typename T>
+    void ADD(T& head, T& p) {
+        if (head){
+        p->next = head;
+        p->prev = head->prev;
+        head->prev = p;
+        p->prev->next = p;} else{
+            head = p;
+            head->next = head->prev = p;
+        }
+    }
+
+    template<typename T>
+    void DELETE(T& head, T& p) {
+        if (head) {
+            if (head == head->next)
+                head = NULL;
+            else if (p == head)
+                head = head->next;
+            p->next->prev = p->prev;
+            p->prev->next = p->next;
+            FREE(p);
+        }
+    }
+    bool Collinear(vertex_ptr a, vertex_ptr b, vertex_ptr c) {
+        return (SquaredArea(a->v, b->v, c->v) == 0);
+    }
+    vertex_ptr vertices = NULL;
+    halfEdge_ptr edges = NULL;
+    face_ptr faces = NULL;
+    
+    
+    vertex_ptr MakeNewVertex() {
+        vertex_ptr v = new vertexStruct;
+        v->newHalfEdge = NULL;
+        v->onhull = false;
+        v->mark = false;
+        ADD(vertices, v);
+        return v;
+    }
+
+    halfEdge_ptr MakeNewEdge() {
+        halfEdge_ptr e = new halfEdgeStruct;
+        e->face = e->newFace = NULL;
+        e->vert = NULL;
+        e->deleteFlag = false;
+        ADD(edges, e);
+        return e;
+    }
+
+    face_ptr MakeNewFace() {
+        face_ptr f = new faceStruct;
+        for (int i = 0; i < 3; ++i) {
+            f->edge[i] = NULL;
+            f->vertex[i] = NULL;
+        }
+        f->visible = false;
+        ADD(faces, f);
+        return f;
+    }    
+    
+    
+    face_ptr MakeFace(vertex_ptr v0, vertex_ptr v1, vertex_ptr v2) {
+        face_ptr f;
+        halfEdge_ptr e0, e1, e2;
+
+        
+        e0 = MakeNewEdge();e1 = MakeNewEdge();e2 = MakeNewEdge();
+        
+        e0->vert = v0;e1->vert = v1;e2->vert = v2;
+
+        /* Create face for triangle. */
+        f = MakeNewFace();
+        f->edge[0] = e0;
+        f->edge[1] = e1;
+        f->edge[2] = e2;
+        f->vertex[0] = v0;
+        f->vertex[1] = v1; 
+        f->vertex[2] = v2;
+        /* Link edges to face. */
+        e0->face = e1->face = e2->face = f;
+        return f;
+    }
+
+    
+    void BuildInitialHull() {
+        vertex_ptr v0, v1, v2, v3, t;
+        face_ptr f0, f1 = NULL;
+        halfEdge_ptr e0, e1, e2, s;
+        
+        /* Find 3 noncollinear points. */
+        v0 = vertices;
+        while (Collinear(v0, v0->next, v0->next->next)){
+            if ((v0 = v0->next) == vertices)
+                printf("All points are Collinear!\n"), exit(0);
+        }
+        v1 = v0->next;
+        v2 = v1->next;
+
+        /* Mark the vertices as processed. */
+        v0->mark = true;
+        v1->mark = true;
+        v2->mark = true;
+
+        /* Create the two "twin" faces. */
+        f0 = MakeFace(v0, v1, v2);
+        f1 = MakeFace(v2, v1, v0);
+
+        
+        // link half edge pairs
+        
+        f0->edge[0]->pair = f1->edge[1];
+        f0->edge[1]->pair = f1->edge[0];
+        f0->edge[2]->pair = f1->edge[2];
+        
+        f1->edge[0]->pair = f0->edge[1];
+        f1->edge[1]->pair = f0->edge[0];
+        f1->edge[2]->pair = f0->edge[2];
+        
+        
+        
+        /* find a fourth, noncoplanar point to form tetrahedron. */
+        v3 = v2->next;
+        auto vol = SignedVolume(f0->vertex[0]->v, f0->vertex[1]->v, f0->vertex[2]->v, v3->v);
+        while (!vol) {
+            if ((v3 = v3->next) == v0)
+                printf("DoubleTriangle:  All points are coplanar!\n"), exit(0);
+            vol = SignedVolume(f0->vertex[0]->v, f0->vertex[1]->v, f0->vertex[2]->v, v3->v);
+        }
+        /* Insure that v3 will be the first added. */
+        vertices = v3;
+//        PrintOut(v3);
+    }
+    
+    face_ptr MakeConeFace(halfEdge_ptr e, vertex_ptr p) {
+        halfEdge_ptr new_edge[2];
+        face_ptr new_face;
+        /* Make two new edges (if don't already exist). */
+
+        new_edge[0] = MakeNewEdge();
+        new_edge[0]->vert = e->pair->vert;
+
+        new_edge[1] = MakeNewEdge();
+        new_edge[1]->vert = p;
+
+        // here need to add pair information, and new half-edge info to vertex
+        if (e->vert->newHalfEdge == NULL) {
+            e->vert->newHalfEdge = new_edge[1];
+        } else {
+            new_edge[1]->pair = e->vert->newHalfEdge;
+            e->vert->newHalfEdge->pair = new_edge[1];
+        }
+
+        if (e->pair->vert->newHalfEdge == NULL) {
+            e->pair->vert->newHalfEdge = new_edge[0];
+        } else {
+            new_edge[0]->pair = e->pair->vert->newHalfEdge;
+            e->pair->vert->newHalfEdge->pair = new_edge[0];
+        }
+        
+        /* Make the new face. */
+        new_face = MakeNewFace();
+        new_face->edge[0] = e;new_face->edge[1] = new_edge[0];new_face->edge[2] = new_edge[1];
+        new_face->vertex[0] = e->vert;new_face->vertex[1] = new_edge[0]->vert;new_face->vertex[2] = p;
+ //     PrintOut(vertices);
+ //       MakeCcw(new_face, e, p);
+ //       PrintOut(vertices);     
+        /* Set the newfaces for new edges*/       
+        new_edge[0]->face = new_face;
+        new_edge[1]->face = new_face;
+        
+        return new_face;
+    }
+    
+    
+        bool AddPointToHull(vertex_ptr p) {
+        face_ptr f;
+        halfEdge_ptr e, temp;
+        bool vis = false;
+
+        /* Mark faces visible from p. */
+        f = faces;
+        do {
+            auto vol = SignedVolume(f->vertex[0]->v, f->vertex[1]->v, f->vertex[2]->v, p->v);
+            if (vol < 0) {
+                f->visible = true;
+                vis = true;
+            }
+            f = f->next;
+        } while (f != faces);
+
+        /* If no faces are visible from p, then p is inside the hull. */
+        if (!vis) {
+            p->onhull = false;
+            return false;
+        }
+
+        // iterate through all half edges
+        e = edges;
+        do {
+            temp = e->next;
+            if (e->face->visible && e->pair->face->visible) {// if both visible mark for deletion
+                                
+                e->deleteFlag = true;
+            }else if (e->face->visible && !(e->pair->face->visible)){
+                e->newFace = MakeConeFace(e, p);           
+            }
+            e = temp;
+        } while (e != edges);
+        return true;
+    }
+        
+        void CleanEdges(void) {
+        halfEdge_ptr e; /* Primary index into edge list. */
+        halfEdge_ptr t; /* Temporary edge pointer. */
+
+        /* Integrate the newface's into the data structure. */
+        /* Check every edge. */
+        e = edges;
+        do {
+            if (e->newFace) {
+                if (e->face->visible)
+                    e->face = e->newFace;
+                e->newFace = NULL;
+            }
+            e = e->next;
+        } while (e != edges);
+
+        /* Delete any edges where its face and its pair's face are visible marked for deletion. */
+        while (edges && edges->deleteFlag) {
+            e = edges;
+            DELETE(edges, e);
+        }
+        
+        e = edges->next;
+        do {
+            if (e->deleteFlag) {
+                t = e;
+                e = e->next;
+                DELETE(edges, t);
+            } else e = e->next;
+        } while (e != edges);
+    }
+
+    void CleanFaces(void) {
+        face_ptr f; /* Primary pointer into face list. */
+        face_ptr t; 
+        while (faces && faces->visible) {
+            f = faces;
+            DELETE(faces, f);
+        }
+        f = faces->next;
+        do {
+            if (f->visible) {
+                t = f;
+                f = f->next;
+                DELETE(faces, t);
+            } else f = f->next;
+        } while (f != faces);
+    }
+
+    void CleanVertices(vertex_ptr *pvnext) {
+        halfEdge_ptr e;
+        vertex_ptr v, t;
+
+        /* Mark all vertices incident to some undeleted edge as on the hull. */
+        e = edges;
+        do {
+//            e->vert->onhull = e->pair->vert->onhull = true;
+            e->vert->onhull = true;
+            e = e->next;
+        } while (e != edges);
+
+        /* Delete all vertices that have been processed but
+           are not on the hull. */
+        while (vertices && vertices->mark && !vertices->onhull) {
+            /* If about to delete vnext, advance it first. */
+            v = vertices;
+            if (v == *pvnext)
+                *pvnext = v->next;
+            DELETE(vertices, v);
+        }
+        v = vertices->next;
+        do {
+            if (v->mark && !v->onhull) {
+                t = v;
+                v = v->next;
+                if (t == *pvnext)
+                    *pvnext = t->next;
+                DELETE(vertices, t);
+            } else v = v->next;
+        } while (v != vertices);
+
+        /* Reset flags. */
+        v = vertices;
+        do {
+            v->newHalfEdge = NULL;
+            v->onhull = false;
+            v = v->next;
+        } while (v != vertices);
+    }
+
+    void CleanUp(vertex_ptr *pvnext) {
+        CleanEdges();
+        CleanFaces();
+        CleanVertices(pvnext);
+    }
+
+    void ConstructHull() {
+        vertex_ptr v, vnext;
+        bool changed; /* T if addition changes hull; not used. */
+
+        v = vertices;
+        do {
+            vnext = v->next;
+            if (!v->mark) {
+                v->mark = true;
+                changed = AddPointToHull(v);
+ //               PrintOut(v);
+                CleanUp(&vnext); /* Pass down vnext in case it gets deleted. */                
+ //               PrintOut(v);
+            }
+            v = vnext;
+        }while (v != vertices);
+    }        
+}
+
+namespace IncrementalAlg2 {
     typedef struct vertexStruct *vertex_ptr;
     typedef struct edgeStruct *edge_ptr;
     typedef struct faceStruct *face_ptr;
@@ -741,6 +1111,7 @@ void GiftWrapAlgorithm(std::vector< Point< 3, CType > >& points, std::vector< Po
             t[0] = e[0];
             t[1] = e[1];
             t[2] = q;
+            // if it is new triangle
             if (tri_set.find(t) == tri_set.end()){
                 tri_set.insert(t);
                 hullF.push_back(t);
@@ -764,11 +1135,18 @@ void GiftWrapAlgorithm(std::vector< Point< 3, CType > >& points, std::vector< Po
         V.insert(t[1]);
         V.insert(t[2]);
     }
+    int count = 0;
+    std::unordered_map<int,int> v_map;
     for (auto &v : V) {
         hullV.push_back(points[v]);
+        v_map[v] = count++;
 //        std::cout << v << std::endl;
     }
-
+    for (auto &t : hullF) {
+        t[0] = v_map[t[0]];
+        t[1] = v_map[t[1]];
+        t[2] = v_map[t[2]];
+    }
 }
 
 template< class CType >
@@ -785,15 +1163,18 @@ void IncrementalAlgorithm(std::vector< Point< 3, CType > >& points, std::vector<
     IncrementalAlg::ConstructHull();
     
     IncrementalAlg::vertex_ptr v = IncrementalAlg::vertices;
+    count = 0;
+    std::unordered_map<int,int> v_map;
     do{
         hullV.push_back(v->v);
+        v_map[v->idx] = count++;
         v = v->next;
     }while(v!=IncrementalAlg::vertices);
     
     IncrementalAlg::face_ptr f = IncrementalAlg::faces;
     do{
         Triangle tri;
-        tri[0] = f->vertex[0]->idx;tri[1] = f->vertex[1]->idx;tri[2] = f->vertex[2]->idx;
+        tri[0] = v_map[f->vertex[0]->idx];tri[1] = v_map[f->vertex[1]->idx];tri[2] = v_map[f->vertex[2]->idx];
         hullF.push_back(tri);
         f = f->next;
     }while(f!=IncrementalAlg::faces);

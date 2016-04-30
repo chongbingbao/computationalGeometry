@@ -280,6 +280,14 @@ void Delaunay( std::vector< Point< 2 , CType > >& points , std::vector< Point< 2
 	std::vector< Point< 3, CType > > hullV;
 	std::vector< Triangle > hullF;
 	GiftWrapAlgorithm(points_3d, hullV, hullF);
+
+    std::ofstream os;
+    os.open("points.txt");
+
+    for (auto &p : hullV) {
+        os << p[0] << "\t" << p[1] << "\t" << p[2] << std::endl;
+    }
+    os.close();
         
         dVertices = points;
         // now project lower triangles, we use visibility test
