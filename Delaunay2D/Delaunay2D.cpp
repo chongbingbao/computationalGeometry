@@ -84,185 +84,409 @@ long long SignedVolume(Point<3, int> &p0, Point<3, int> &p1, Point<3, int> &p2, 
     return vol;
 }
 
-namespace GiftWrap {
 
-    typedef std::array<Point<3, int>, 2> EdgePoint;
 
-    int PivotOnEdge(EdgePoint &edge, std::vector< Point < 3, int>>&points) {
-        int p = 0;
-        int np = points.size();
-        std::vector<double> volSet;
-        long long area2 = SquaredArea(edge[0], edge[1], points[p]);
-        for (int i = 1; i < np; i++) {
-            long long volume6 = SignedVolume(edge[0], edge[1], points[p], points[i]);
-            volSet.push_back(volume6);
-
-            if (volume6 < 0) {
-                p = i; // this step is comparing p and i to  see whether i is on the outer side of the face e0,e1,p, if negative, then it is
-                //this step can always ensure this is the first encountered point during the pivoting process
-            } else if (volume6 == 0) {
-                long long _area2 = SquaredArea(edge[0], edge[1], points[i]);
-                if (_area2 > area2) {
-                    area2 = _area2; // this step can always eliminate points inside a triangle
-                    p = i;
-                }
-
-            }
-
-        }
-
-        return p;
+namespace IncrementalAlg{
+    typedef struct vertexStruct *vertex_ptr;
+    typedef struct halfEdgeStruct *halfEdge_ptr;
+    typedef struct faceStruct *face_ptr;
+    
+    struct halfEdgeStruct{
+        vertex_ptr vert;
+        halfEdge_ptr pair;
+        face_ptr face;
+        halfEdge_ptr next,prev;
+        
+        bool deleteFlag;
+        bool mark; /* T iff point already processed. */        
+        face_ptr newFace;
+    };
+    
+    struct vertexStruct{
+        Point<3, int> v;
+        halfEdge_ptr edge;
+        vertex_ptr next, prev;
+        
+        int idx;
+        bool onhull;
+        bool mark;
+        halfEdge_ptr newHalfEdge;
+    };
+    
+    struct faceStruct{
+        halfEdge_ptr edge[3];
+        face_ptr next;
+        face_ptr prev;
+        vertex_ptr vertex[3];
+        bool visible;
+    };
+    template<typename T>
+    void SWAP(T& t, T& x, T& y) {
+        t = x;x = y;y = t;
     }
 
-    Edge FindEdgeOnHull(std::vector< Point < 3, int >>&points) {
-        // first find the bottom most left most back most point
-        int p = 0;
-        for (int i = 1; i < points.size(); i++) {
-            if (points[i][0] < points[p][0]
-                    || (points[i][0] == points[p][0] && points[i][1] < points[p][1])
-                    || (points[i][0] == points[p][0] && points[i][1] == points[p][1] && points[i][2] < points[p][2])) {
-                p = i;
-            }
-        }
-        int q = p;
-        for (int i = 0; i < points.size(); i++) {
-            if ((points[i][0] == points[q][0] && points[i][1] == points[q][1] && points[i][2] > points[q][2])) {
-                q = i;
-            }
-        }
-
-        EdgePoint e;
-        e[0] = points[p];
-        e[1] = points[q];
-        if (q == p) {
-            e[1][2] = e[1][2] + 1;
-        }
-
-        q = PivotOnEdge(e, points);
-        Edge res;
-        res[0] = p;
-        res[1] = q;
-
-        return res;
+    template<typename T>
+    void fREE(T& p) {
+        if (p) { free(p); p = NULL; }
     }
 
-    Triangle FindTriangleOnHull(std::vector< Point < 3, int >>&points) {
-
-        Edge edge = FindEdgeOnHull(points);
-        EdgePoint edgeP = {points[edge[0]], points[edge[1]]};
-        int r = PivotOnEdge(edgeP, points);
-        Triangle tri;
-        tri[0] = edge[0];
-        tri[1] = edge[1];
-        tri[2] = r;
-        return tri;
+    template<typename T>
+    void ADD(T& head, T& p) {
+        if (head){
+        p->next = head;
+        p->prev = head->prev;
+        head->prev = p;
+        p->prev->next = p;} else{
+            head = p;
+            head->next = head->prev = p;
+        }
     }
 
-    struct Edgehash {
-
-        std::size_t operator()(const Edge &x) const {
-            return std::hash<int>()(x[0])+std::hash<int>()(x[1]);
+    template<typename T>
+    void DELETE(T& head, T& p) {
+        if (head) {
+            if (head == head->next)
+                head = NULL;
+            else if (p == head)
+                head = head->next;
+            p->next->prev = p->prev;
+            p->prev->next = p->next;
+            FREE(p);
         }
-    };
+    }
+    bool Collinear(vertex_ptr a, vertex_ptr b, vertex_ptr c) {
+        return (SquaredArea(a->v, b->v, c->v) == 0);
+    }
+    vertex_ptr vertices = NULL;
+    halfEdge_ptr edges = NULL;
+    face_ptr faces = NULL;
+    
+    
+    vertex_ptr MakeNewVertex() {
+        vertex_ptr v = new vertexStruct;
+        v->newHalfEdge = NULL;
+        v->onhull = false;
+        v->mark = false;
+        ADD(vertices, v);
+        return v;
+    }
 
-    struct EdgeEqual {
+    halfEdge_ptr MakeNewEdge() {
+        halfEdge_ptr e = new halfEdgeStruct;
+        e->face = e->newFace = NULL;
+        e->vert = NULL;
+        e->deleteFlag = false;
+        ADD(edges, e);
+        return e;
+    }
 
-        bool operator()(const Edge &x1, const Edge &x2) const {
-            return ((x1[0]==x2[0] && x1[1] ==x2[1])||(x1[0]==x2[1] && x1[1] ==x2[0]));
+    face_ptr MakeNewFace() {
+        face_ptr f = new faceStruct;
+        for (int i = 0; i < 3; ++i) {
+            f->edge[i] = NULL;
+            f->vertex[i] = NULL;
         }
-    };
+        f->visible = false;
+        ADD(faces, f);
+        return f;
+    }    
+    
+    
+    face_ptr MakeFace(vertex_ptr v0, vertex_ptr v1, vertex_ptr v2) {
+        face_ptr f;
+        halfEdge_ptr e0, e1, e2;
 
-    struct Trihash {
+        
+        e0 = MakeNewEdge();e1 = MakeNewEdge();e2 = MakeNewEdge();
+        
+        e0->vert = v0;e1->vert = v1;e2->vert = v2;
 
-        std::size_t operator()(const Triangle &x) const {
-            return std::hash<int>()(x[0])+std::hash<int>()(x[1])+std::hash<int>()(x[2]);
-        }
-    };
-
-    struct TriEqual {
-
-        bool operator()(const Triangle &x1, const Triangle &x2) const {
-            bool case1 = (x1[0]==x2[0] && x1[1] ==x2[1] && x1[2]==x2[2]);
-            bool case2 = (x1[0]==x2[1] && x1[1] ==x2[2] && x1[2]==x2[0]);
-            bool case3 = (x1[0]==x2[2] && x1[1] ==x2[0] && x1[2]==x2[1]);
-            return (case1 || case2 || case3);
-       }
-    };
+        /* Create face for triangle. */
+        f = MakeNewFace();
+        f->edge[0] = e0;
+        f->edge[1] = e1;
+        f->edge[2] = e2;
+        f->vertex[0] = v0;
+        f->vertex[1] = v1; 
+        f->vertex[2] = v2;
+        /* Link edges to face. */
+        e0->face = e1->face = e2->face = f;
+        return f;
+    }
 
     
-    struct EdgeInfo {
-        std::unordered_map<Edge, int, Edgehash, EdgeEqual> mark;
+    void BuildInitialHull() {
+        vertex_ptr v0, v1, v2, v3, t;
+        face_ptr f0, f1 = NULL;
+        halfEdge_ptr e0, e1, e2, s;
+        
+        /* Find 3 noncollinear points. */
+        v0 = vertices;
+        while (Collinear(v0, v0->next, v0->next->next)){
+            if ((v0 = v0->next) == vertices)
+                printf("All points are Collinear!\n"), exit(0);
+        }
+        v1 = v0->next;
+        v2 = v1->next;
 
-        bool NotProcessed(Edge e) {
-            if (mark.find(e) == mark.end()) {
-                return true; // if not found, then not processed
+        /* Mark the vertices as processed. */
+        v0->mark = true;
+        v1->mark = true;
+        v2->mark = true;
+
+        /* Create the two "twin" faces. */
+        f0 = MakeFace(v0, v1, v2);
+        f1 = MakeFace(v2, v1, v0);
+
+        
+        // link half edge pairs
+        
+        f0->edge[0]->pair = f1->edge[1];
+        f0->edge[1]->pair = f1->edge[0];
+        f0->edge[2]->pair = f1->edge[2];
+        
+        f1->edge[0]->pair = f0->edge[1];
+        f1->edge[1]->pair = f0->edge[0];
+        f1->edge[2]->pair = f0->edge[2];
+        
+        
+        
+        /* find a fourth, noncoplanar point to form tetrahedron. */
+        v3 = v2->next;
+        auto vol = SignedVolume(f0->vertex[0]->v, f0->vertex[1]->v, f0->vertex[2]->v, v3->v);
+        while (!vol) {
+            if ((v3 = v3->next) == v0)
+                printf("DoubleTriangle:  All points are coplanar!\n"), exit(0);
+            vol = SignedVolume(f0->vertex[0]->v, f0->vertex[1]->v, f0->vertex[2]->v, v3->v);
+        }
+        vertices = v3;
+    }
+    
+    face_ptr MakeConeFace(halfEdge_ptr e, vertex_ptr p) {
+        halfEdge_ptr new_edge[2];
+        face_ptr new_face;
+        /* Make two new edges (if don't already exist). */
+
+        new_edge[0] = MakeNewEdge();
+        new_edge[0]->vert = e->pair->vert;
+
+        new_edge[1] = MakeNewEdge();
+        new_edge[1]->vert = p;
+
+        // here need to add pair information, and new half-edge info to vertex
+        if (e->vert->newHalfEdge == NULL) {
+            e->vert->newHalfEdge = new_edge[1];
+        } else {
+            new_edge[1]->pair = e->vert->newHalfEdge;
+            e->vert->newHalfEdge->pair = new_edge[1];
+        }
+
+        if (e->pair->vert->newHalfEdge == NULL) {
+            e->pair->vert->newHalfEdge = new_edge[0];
+        } else {
+            new_edge[0]->pair = e->pair->vert->newHalfEdge;
+            e->pair->vert->newHalfEdge->pair = new_edge[0];
+        }
+        
+        /* Make the new face. */
+        new_face = MakeNewFace();
+        new_face->edge[0] = e;new_face->edge[1] = new_edge[0];new_face->edge[2] = new_edge[1];
+        new_face->vertex[0] = e->vert;new_face->vertex[1] = new_edge[0]->vert;new_face->vertex[2] = p;
+
+        /* Set the newfaces for new edges*/       
+        new_edge[0]->face = new_face;
+        new_edge[1]->face = new_face;
+        
+        return new_face;
+    }
+    
+    
+        bool AddPointToHull(vertex_ptr p) {
+        face_ptr f;
+        halfEdge_ptr e, temp;
+        bool vis = false;
+
+        /* Mark faces visible from p. */
+        f = faces;
+        do {
+            auto vol = SignedVolume(f->vertex[0]->v, f->vertex[1]->v, f->vertex[2]->v, p->v);
+            if (vol < 0) {
+                f->visible = true;
+                vis = true;
             }
+            f = f->next;
+        } while (f != faces);
+
+        /* If no faces are visible from p, then p is inside the hull. */
+        if (!vis) {
+            p->onhull = false;
             return false;
         }
 
-        void MarkProcessedEdges(Edge e) {
-            mark[e] = 1;
-        }
-    };
-
-
-}
-
-template< class CType >
-void GiftWrapAlgorithm(std::vector< Point< 3, CType > >& points, std::vector< Point< 3, CType > >& hullV, std::vector< Triangle >& hullF) {
-   
-    Triangle t = GiftWrap::FindTriangleOnHull(points);
-    std::queue<Edge> Q;
-    Edge e0, e1, e2;
-    e0[0] = t[1];
-    e0[1] = t[0];
-    e1[0] = t[2];
-    e1[1] = t[1];
-    e2[0] = t[0];
-    e2[1] = t[2];
-    Q.push(e0);
-    Q.push(e1);
-    Q.push(e2);
-    hullF.push_back(t);
-    GiftWrap::EdgeInfo edgeInfo;
-    std::unordered_set<Triangle,GiftWrap::Trihash,GiftWrap::TriEqual> tri_set;
-    tri_set.insert(t);
-    while (!Q.empty()) {
-        Edge e = Q.front();
-        Q.pop();
-        if (edgeInfo.NotProcessed(e)) {
-            GiftWrap::EdgePoint edgeP = {points[e[0]], points[e[1]]};
-            int q = GiftWrap::PivotOnEdge(edgeP, points);
-            t[0] = e[0];
-            t[1] = e[1];
-            t[2] = q;
-            if (tri_set.find(t) == tri_set.end()){
-                tri_set.insert(t);
-                hullF.push_back(t);
-            // hullV.push_back(points[t[0]]);hullV.push_back(points[t[1]]);hullV.push_back(points[t[2]]);
-                e0[0] = t[1];
-                e0[1] = t[0];
-                e1[0] = t[2];
-                e1[1] = t[1];
-                e2[0] = t[0];
-                e2[1] = t[2];
-                Q.push(e0);
-                Q.push(e1);
-                Q.push(e2);
+        // iterate through all half edges
+        e = edges;
+        do {
+            temp = e->next;
+            if (e->face->visible && e->pair->face->visible) {// if both visible mark for deletion
+                                
+                e->deleteFlag = true;
+            }else if (e->face->visible && !(e->pair->face->visible)){
+                e->newFace = MakeConeFace(e, p);           
             }
-            edgeInfo.MarkProcessedEdges(e);
+            e = temp;
+        } while (e != edges);
+        return true;
+    }
+        
+        void CleanEdges(void) {
+        halfEdge_ptr e; /* Primary index into edge list. */
+        halfEdge_ptr t; /* Temporary edge pointer. */
+
+        e = edges;
+        do {
+            if (e->newFace) {
+                if (e->face->visible)
+                    e->face = e->newFace;
+                e->newFace = NULL;
+            }
+            e = e->next;
+        } while (e != edges);
+
+        /* Delete any edges where its face and its pair's face are visible marked for deletion. */
+        while (edges && edges->deleteFlag) {
+            e = edges;
+            DELETE(edges, e);
         }
-    }
-    std::unordered_set<int> V;
-    for (auto &t : hullF) {
-        V.insert(t[0]);
-        V.insert(t[1]);
-        V.insert(t[2]);
-    }
-    for (auto &v : V) {
-        hullV.push_back(points[v]);
+        
+        e = edges->next;
+        do {
+            if (e->deleteFlag) {
+                t = e;
+                e = e->next;
+                DELETE(edges, t);
+            } else e = e->next;
+        } while (e != edges);
     }
 
+    void CleanFaces(void) {
+        face_ptr f; /* Primary pointer into face list. */
+        face_ptr t; 
+        while (faces && faces->visible) {
+            f = faces;
+            DELETE(faces, f);
+        }
+        f = faces->next;
+        do {
+            if (f->visible) {
+                t = f;
+                f = f->next;
+                DELETE(faces, t);
+            } else f = f->next;
+        } while (f != faces);
+    }
+
+    void CleanVertices(vertex_ptr *pvnext) {
+        halfEdge_ptr e;
+        vertex_ptr v, t;
+
+        /* Mark all vertices incident to some undeleted edge as on the hull. */
+        e = edges;
+        do {
+//            e->vert->onhull = e->pair->vert->onhull = true;
+            e->vert->onhull = true;
+            e = e->next;
+        } while (e != edges);
+
+        /* Delete all vertices that have been processed but
+           are not on the hull. */
+        while (vertices && vertices->mark && !vertices->onhull) {
+            /* If about to delete vnext, advance it first. */
+            v = vertices;
+            if (v == *pvnext)
+                *pvnext = v->next;
+            DELETE(vertices, v);
+        }
+        v = vertices->next;
+        do {
+            if (v->mark && !v->onhull) {
+                t = v;
+                v = v->next;
+                if (t == *pvnext)
+                    *pvnext = t->next;
+                DELETE(vertices, t);
+            } else v = v->next;
+        } while (v != vertices);
+
+        /* Reset flags. */
+        v = vertices;
+        do {
+            v->newHalfEdge = NULL;
+            v->onhull = false;
+            v = v->next;
+        } while (v != vertices);
+    }
+
+    void CleanUp(vertex_ptr *pvnext) {
+        CleanEdges();
+        CleanFaces();
+        CleanVertices(pvnext);
+    }
+
+    void ConstructHull() {
+        vertex_ptr v, vnext;
+        bool changed; /* T if addition changes hull; not used. */
+
+        v = vertices;
+        do {
+            vnext = v->next;
+            if (!v->mark) {
+                v->mark = true;
+                changed = AddPointToHull(v);
+ //               PrintOut(v);
+                CleanUp(&vnext); /* Pass down vnext in case it gets deleted. */                
+ //               PrintOut(v);
+            }
+            v = vnext;
+        }while (v != vertices);
+    }        
+}
+template< class CType >
+void IncrementalAlgorithm(std::vector< Point< 3, CType > >& points, std::vector< Point< 3, CType > >& hullV, std::vector< Triangle >& hullF) {
+
+    int count = 0;
+    for(auto &p: points){
+        auto v = IncrementalAlg::MakeNewVertex();
+        v->v = p;
+        v->idx = count++;
+    }
+    
+    IncrementalAlg::BuildInitialHull();
+    IncrementalAlg::ConstructHull();
+    
+    IncrementalAlg::vertex_ptr v = IncrementalAlg::vertices;
+//    count = 0;
+//    std::unordered_map<int,int> v_map;
+    do{
+        hullV.push_back(v->v);
+//        v_map[v->idx] = count++;
+        v = v->next;
+    }while(v!=IncrementalAlg::vertices);
+    
+    IncrementalAlg::face_ptr f = IncrementalAlg::faces;
+    do{
+        Triangle tri;
+        tri[0] = f->vertex[0]->idx;tri[1] = f->vertex[1]->idx;tri[2] = f->vertex[2]->idx;
+        hullF.push_back(tri);
+        f = f->next;
+    }while(f!=IncrementalAlg::faces);
+    
+//          std::ofstream os;
+//    os.open("faces.dat");
+    
+//    for (auto &t: hullF){
+//        os << t[0] << "\t" << t[1] << "\t" << t[2] << std::endl;    
+//    }
+//    os.close(); 
 }
 
 template< class CType >
@@ -279,16 +503,8 @@ void Delaunay( std::vector< Point< 2 , CType > >& points , std::vector< Point< 2
 	// construct the convex hull for the lifted points
 	std::vector< Point< 3, CType > > hullV;
 	std::vector< Triangle > hullF;
-	GiftWrapAlgorithm(points_3d, hullV, hullF);
+       IncrementalAlgorithm(points_3d, hullV, hullF);
 
-    std::ofstream os;
-    os.open("points.txt");
-
-    for (auto &p : hullV) {
-        os << p[0] << "\t" << p[1] << "\t" << p[2] << std::endl;
-    }
-    os.close();
-        
         dVertices = points;
         // now project lower triangles, we use visibility test
         for (auto &t: hullF){
@@ -300,6 +516,14 @@ void Delaunay( std::vector< Point< 2 , CType > >& points , std::vector< Point< 2
                 dTriangles.push_back(t);
             }
         }
+//    std::ofstream os;
+//    os.open("faces.dat");
+    
+//    for (auto &t: dTriangles){
+//        os << t[0] << "\t" << t[1] << "\t" << t[2] << std::endl;    
+//    }
+//    os.close(); 
+        
         
 }
 
@@ -333,13 +557,13 @@ int main( int argc , char* argv[] )
 		printf( "Got random points: %.2f(s)\n" , t.elapsed() );
 	}
 
-    std::ofstream os;
-    os.open("points.txt");
+//    std::ofstream os;
+//    os.open("points.txt");
 
-    for (auto &p : points) {
-        os << p[0] << "\t" << p[1] << "\t" << p[2] << std::endl;
-    }
-    os.close();
+//    for (auto &p : points) {
+//        os << p[0] << "\t" << p[1]  << std::endl;
+//    }
+//    os.close();
 
 	{
 		Timer t;

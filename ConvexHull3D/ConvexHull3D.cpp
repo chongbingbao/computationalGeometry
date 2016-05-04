@@ -96,6 +96,9 @@ long SignedVolume(Point<3, int> &p0, Point<3, int> &p1, Point<3, int> &p2, Point
     return vol;
 }
 
+// this is the incremental algorithm implementation using custom design half-edge data structure from the textbook
+// this implementation is closely following the textbook in the cleanup procedure
+// this implementation is for grading.
 namespace IncrementalAlg{
     typedef struct vertexStruct *vertex_ptr;
     typedef struct halfEdgeStruct *halfEdge_ptr;
@@ -269,9 +272,7 @@ namespace IncrementalAlg{
                 printf("DoubleTriangle:  All points are coplanar!\n"), exit(0);
             vol = SignedVolume(f0->vertex[0]->v, f0->vertex[1]->v, f0->vertex[2]->v, v3->v);
         }
-        /* Insure that v3 will be the first added. */
         vertices = v3;
-//        PrintOut(v3);
     }
     
     face_ptr MakeConeFace(halfEdge_ptr e, vertex_ptr p) {
@@ -304,9 +305,7 @@ namespace IncrementalAlg{
         new_face = MakeNewFace();
         new_face->edge[0] = e;new_face->edge[1] = new_edge[0];new_face->edge[2] = new_edge[1];
         new_face->vertex[0] = e->vert;new_face->vertex[1] = new_edge[0]->vert;new_face->vertex[2] = p;
- //     PrintOut(vertices);
- //       MakeCcw(new_face, e, p);
- //       PrintOut(vertices);     
+
         /* Set the newfaces for new edges*/       
         new_edge[0]->face = new_face;
         new_edge[1]->face = new_face;
@@ -356,8 +355,6 @@ namespace IncrementalAlg{
         halfEdge_ptr e; /* Primary index into edge list. */
         halfEdge_ptr t; /* Temporary edge pointer. */
 
-        /* Integrate the newface's into the data structure. */
-        /* Check every edge. */
         e = edges;
         do {
             if (e->newFace) {
@@ -467,6 +464,10 @@ namespace IncrementalAlg{
     }        
 }
 
+
+// this is the incremental algorithm implementation using full edge data structure from the textbook
+// this implementation is closely following the textbook
+// this implementation is simply for comparison, not for grading.
 namespace IncrementalAlg2 {
     typedef struct vertexStruct *vertex_ptr;
     typedef struct edgeStruct *edge_ptr;
@@ -748,17 +749,7 @@ namespace IncrementalAlg2 {
         return true;
 
     }
-    /*---------------------------------------------------------------------
-    CleanUp goes through each data structure list and clears all
-    flags and NULLs out some pointers.  The order of processing
-    (edges, faces, vertices) is important.
-    ---------------------------------------------------------------------*/
 
-    /*---------------------------------------------------------------------
-    CleanEdges runs through the edge list and cleans up the structure.
-    If there is a newface then it will put that face in place of the 
-    visible face and NULL out newface. It also deletes so marked edges.
-    ---------------------------------------------------------------------*/
     void CleanEdges(void) {
         edge_ptr e; /* Primary index into edge list. */
         edge_ptr t; /* Temporary edge pointer. */
@@ -791,9 +782,6 @@ namespace IncrementalAlg2 {
         } while (e != edges);
     }
 
-    /*---------------------------------------------------------------------
-    CleanFaces runs through the face list and deletes any face marked visible.
-    ---------------------------------------------------------------------*/
     void CleanFaces(void) {
         face_ptr f; /* Primary pointer into face list. */
         face_ptr t; /* Temporary pointer, for deleting. */
@@ -812,13 +800,6 @@ namespace IncrementalAlg2 {
         } while (f != faces);
     }
 
-    /*---------------------------------------------------------------------
-    CleanVertices runs through the vertex list and deletes the 
-    vertices that are marked as processed but are not incident to any 
-    undeleted edges. 
-    The pointer to vnext, pvnext, is used to alter vnext in
-    ConstructHull() if we are about to delete vnext.
-    ---------------------------------------------------------------------*/
     void CleanVertices(vertex_ptr *pvnext) {
         edge_ptr e;
         vertex_ptr v, t;
@@ -883,81 +864,7 @@ namespace IncrementalAlg2 {
         }while (v != vertices);
 
     }
-    #define X   0
-#define Y   1
-#define Z   2
 
-
-/*-------------------------------------------------------------------*/
-void	PrintVertices( void )
-{
-   vertex_ptr  temp;
-
-   temp = vertices;
-   fprintf (stderr, "Vertex List\n");
-   if (vertices) do {
-      fprintf(stderr,"  addr %6x\t", vertices );
-      fprintf(stderr,"  vnum %4d", vertices->idx );
-      fprintf(stderr,"   (%6d,%6d,%6d)",vertices->v[X],
-	      vertices->v[Y], vertices->v[Z] );
-      fprintf(stderr,"   active:%3d", vertices->onhull );
-      fprintf(stderr,"   dup:%5x", vertices->duplicate );
-      fprintf(stderr,"   mark:%2d\n", vertices->mark );
-      vertices = vertices->next;
-   } while ( vertices != temp );
-
-}
-
-/*-------------------------------------------------------------------*/
-void	PrintEdges( void )
-{
-   edge_ptr  temp;
-   int 	  i;
-	
-   temp = edges;
-   fprintf (stderr, "Edge List\n");
-   if (edges) do {
-      fprintf( stderr, "  addr: %6x\t", edges );
-      fprintf( stderr, "adj: ");
-      for (i=0; i<2; ++i) 
-	 fprintf( stderr, "%6x", edges->adjface[i] );
-      fprintf( stderr, "  endpts:");
-      for (i=0; i<2; ++i) 
-	 fprintf( stderr, "%4d", edges->endpts[i]->idx);
-      fprintf( stderr, "  del:%3d\n", edges->deleteFlag );
-      edges = edges->next; 
-   } while (edges != temp );
-
-}
-
-/*-------------------------------------------------------------------*/
-void	PrintFaces( void )
-{
-   int 	  i;
-   face_ptr  temp;
-
-   temp = faces;
-   fprintf (stderr, "Face List\n");
-   if (faces) do {
-      fprintf(stderr, "  addr: %10x  ", faces );
-      fprintf(stderr, "  edges:");
-      for( i=0; i<3; ++i )
-	 fprintf(stderr, "%10x ", faces->edge[i] );
-      fprintf(stderr, "  vert:");
-      for ( i=0; i<3; ++i)
-	 fprintf(stderr, "%4d", faces->vertex[i]->idx );
-      fprintf(stderr, "  vis: %d\n", faces->visible );
-      faces= faces->next;
-   } while ( faces != temp );
-
-}
-    void PrintOut( vertex_ptr v )
-{
-   fprintf( stderr, "\nHead vertex %d = %6x :\n", v->idx, v );
-   PrintVertices();
-   PrintEdges();
-   PrintFaces();
-}
 }
 namespace GiftWrap {
 
@@ -966,11 +873,11 @@ namespace GiftWrap {
     int PivotOnEdge(EdgePoint &edge, std::vector< Point < 3, int>>&points) {
         int p = 0;
         int np = points.size();
-        std::vector<double> volSet;
+//        std::vector<double> volSet;
         long long area2 = SquaredArea(edge[0], edge[1], points[p]);
         for (int i = 1; i < np; i++) {
             long long volume6 = SignedVolume(edge[0], edge[1], points[p], points[i]);
-            volSet.push_back(volume6);
+//            volSet.push_back(volume6);
 
             if (volume6 < 0) {
                 p = i; // this step is comparing p and i to  see whether i is on the outer side of the face e0,e1,p, if negative, then it is
@@ -1147,6 +1054,14 @@ void GiftWrapAlgorithm(std::vector< Point< 3, CType > >& points, std::vector< Po
         t[1] = v_map[t[1]];
         t[2] = v_map[t[2]];
     }
+    
+    std::ofstream os;
+    os.open("faces.dat");
+    
+    for (auto &t: hullF){
+        os << t[0] << "\t" << t[1] << "\t" << t[2] << std::endl;    
+    }
+    os.close();
 }
 
 template< class CType >
@@ -1179,7 +1094,13 @@ void IncrementalAlgorithm(std::vector< Point< 3, CType > >& points, std::vector<
         f = f->next;
     }while(f!=IncrementalAlg::faces);
     
-        
+          std::ofstream os;
+    os.open("faces.dat");
+    
+    for (auto &t: hullF){
+        os << t[0] << "\t" << t[1] << "\t" << t[2] << std::endl;    
+    }
+    os.close(); 
 }
 
 int main(int argc, char* argv[]) {
@@ -1206,17 +1127,29 @@ int main(int argc, char* argv[]) {
     {
         Timer t;
         RandomPoints(points, Count.value, RandomSeed.value, Resolution.value);
-//        printf("Got random points: %.2f (s)\n", t.elapsed());
+        printf("Got random points: %.2f (s)\n", t.elapsed());
     }
 
-//    std::ofstream os;
-//    os.open("points.txt");
+ 
+    FILE * fp;
 
-//    for (auto &p : points) {
-//        os << p[0] << "\t" << p[1] << "\t" << p[2] << std::endl;
-//    }
-//    os.close();
+   fp = fopen ("inputpoints4.txt", "r");
+   points.clear();
+   int x,y,z;
+   while ( fscanf (fp,"%d %d %d", &x, &y, &z ) != EOF )  {
+       Point<3,int> p;
+       p[0] = x; p[1] = y; p[2]=z;
+       points.push_back(p);
+      
+   }
 
+    std::ofstream os;
+    os.open("points.txt");
+
+    for (auto &p : points) {
+        os << p[0] << "\t" << p[1] << "\t" << p[2] << std::endl;
+    }
+    os.close();
     {
         Timer t;
         switch (AlgorithmType.value) {
@@ -1226,16 +1159,15 @@ int main(int argc, char* argv[]) {
                 break;
             default: fprintf(stderr, "[ERROR] Unrecognized algorithm type: %d\n", AlgorithmType.value), exit(0);
         }
-//        printf("Computed hull %d -> %d in %.2f (s)\n", Count.value, (int) hullVertices.size(), t.elapsed());
-         printf("%d %d  %.8f \n", Count.value, (int) hullVertices.size(), t.elapsed());
+        printf("Computed hull %d -> %d in %.2f (s)\n", Count.value, (int) hullVertices.size(), t.elapsed());
+//         printf("%d %d  %.8f \n", Count.value, (int) hullVertices.size(), t.elapsed());
     }
+    os.open("outpoints.txt");
 
-//    os.open("mypoints.txt");
-
-//    for (auto &p : hullVertices) {
-//        os << p[0] << "\t" << p[1] << "\t" << p[2] << std::endl;
-//    }
-
+    for (auto &p : hullVertices) {
+        os << p[0] << "\t" << p[1] << "\t" << p[2] << std::endl;
+    }
+    os.close();
     if (Out.set) {
         if (ForVisualization.set) {
             std::vector< std::vector< unsigned int > > _hullFaces(hullFaces.size());
